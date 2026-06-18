@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+"use client";
+import { useState, useEffect } from 'react';
 import { Category, Habit, UnitType } from '@/types';
-import { Plus, Trash2, Edit2, RotateCcw, AlertTriangle, Database } from 'lucide-react';
+import { Plus, Trash2, Edit2 } from 'lucide-react';
 
 interface SettingsProps {
   categories: Category[];
@@ -26,8 +27,6 @@ interface SettingsProps {
     }
   ) => Promise<void>;
   onDeleteHabit: (id: string) => Promise<void>;
-  onSeedDefaultData: () => Promise<void>;
-  isSeeding: boolean;
 }
 
 export default function Settings({
@@ -38,8 +37,6 @@ export default function Settings({
   onAddHabit,
   onUpdateHabit,
   onDeleteHabit,
-  onSeedDefaultData,
-  isSeeding
 }: SettingsProps) {
   // Category Form State
   const [catName, setCatName] = useState('');
@@ -63,7 +60,7 @@ export default function Settings({
   const [editHabSortOrder, setEditHabSortOrder] = useState('0');
 
   // Set default category in habit form if categories load
-  React.useEffect(() => {
+  useEffect(() => {
     if (categories.length > 0 && !habCategoryId) {
       setHabCategoryId(categories[0].id);
     }
@@ -85,7 +82,7 @@ export default function Settings({
       habCategoryId,
       habName.trim(),
       habUnitType,
-      habUnitLabel.trim() || (habUnitType === 'yesno' ? 'yesno' : ''),
+      habUnitLabel.trim() || (habUnitType === 'yesno' ? 'yesno' : habUnitType === 'tick' ? '✓' : ''),
       Number(habMonthlyGoal) || 0,
       Number(habSortOrder) || 0
     );
@@ -109,7 +106,7 @@ export default function Settings({
     await onUpdateHabit(id, {
       name: editHabName.trim(),
       unit_type: editHabUnitType,
-      unit_label: editHabUnitLabel.trim() || (editHabUnitType === 'yesno' ? 'yesno' : ''),
+      unit_label: editHabUnitLabel.trim() || (editHabUnitType === 'yesno' ? 'yesno' : editHabUnitType === 'tick' ? '✓' : ''),
       monthly_goal: Number(editHabMonthlyGoal) || 0,
       sort_order: Number(editHabSortOrder) || 0
     });
@@ -118,34 +115,6 @@ export default function Settings({
 
   return (
     <div className="space-y-8 pb-12">
-      {/* DB Utility Panel */}
-      <div className="bg-slate-900 text-white p-6 rounded-2xl shadow-md border border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div className="flex items-start space-x-3.5">
-          <div className="p-3 bg-indigo-500/20 text-indigo-400 rounded-xl mt-1">
-            <Database className="h-6 w-6" />
-          </div>
-          <div>
-            <h3 className="font-bold text-base tracking-wide text-slate-100">Starter Database Seeding</h3>
-            <p className="text-xs text-slate-400 mt-1 max-w-xl">
-              Pre-populate the empty Supabase tables with the standard categories, habits, goals, and logged history
-              for June 2026 matching the screenshot sheet values.
-            </p>
-          </div>
-        </div>
-        <button
-          onClick={onSeedDefaultData}
-          disabled={isSeeding || habits.length > 0}
-          className={`flex items-center space-x-2 px-5 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-200 cursor-pointer shadow ${
-            habits.length > 0
-              ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
-              : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-950/40 hover:scale-[1.02]'
-          }`}
-        >
-          <RotateCcw className={`h-4 w-4 ${isSeeding ? 'animate-spin' : ''}`} />
-          <span>{isSeeding ? 'Seeding...' : habits.length > 0 ? 'DB already has data' : 'Seed Default Data'}</span>
-        </button>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Habit Manager (Left, 2 cols) */}
         <div className="lg:col-span-2 space-y-6">
@@ -205,6 +174,7 @@ export default function Settings({
                     <option value="yesno">Yes/No Checkbox</option>
                     <option value="number">Number input</option>
                     <option value="count">Count (tally)</option>
+                    <option value="tick">Tick / Tally</option>
                     <option value="pages">Pages log</option>
                   </select>
                 </div>
@@ -216,12 +186,17 @@ export default function Settings({
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g. minutes, km, steps"
+                    placeholder={habUnitType === 'tick' ? '✓ or tick label' : 'e.g. minutes, km, steps'}
                     disabled={habUnitType === 'yesno'}
                     value={habUnitType === 'yesno' ? 'yes/no' : habUnitLabel}
                     onChange={(e) => setHabUnitLabel(e.target.value)}
                     className="w-full text-xs bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg outline-none focus:border-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
                   />
+                  {habUnitType === 'tick' && (
+                    <p className="mt-1 text-[10px] text-slate-400">
+                      Use <span className="font-semibold">✓</span> here for tick habits. Copy/paste the tick symbol into this field.
+                    </p>
+                  )}
                 </div>
 
                 {/* Monthly Goal */}
@@ -323,6 +298,7 @@ export default function Settings({
                                     <option value="yesno">yesno</option>
                                     <option value="number">number</option>
                                     <option value="count">count</option>
+                                    <option value="tick">tick</option>
                                     <option value="pages">pages</option>
                                   </select>
                                   <input
@@ -331,7 +307,13 @@ export default function Settings({
                                     onChange={(e) => setEditHabUnitLabel(e.target.value)}
                                     disabled={editHabUnitType === 'yesno'}
                                     className="text-xs border border-slate-200 px-2 py-1.5 rounded-lg outline-none bg-white disabled:bg-slate-100"
+                                    placeholder={editHabUnitType === 'tick' ? '✓ or tick label' : 'e.g. minutes, km, steps'}
                                   />
+                                  {editHabUnitType === 'tick' && (
+                                    <p className="mt-1 text-[10px] text-slate-400">
+                                      Use <span className="font-semibold">✓</span> here for tick habits. Copy/paste the tick symbol if needed.
+                                    </p>
+                                  )}
                                   <input
                                     type="number"
                                     value={editHabMonthlyGoal}

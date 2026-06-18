@@ -5,10 +5,15 @@ import { supabase } from '@/lib/supabase';
 
 export default function TestConnectionPage() {
   const [loading, setLoading] = useState(true);
+  type DataResult = {
+    data: unknown[] | null;
+    error: { message?: string } | null;
+  };
+
   const [results, setResults] = useState<{
-    categories: { data: any; error: any };
-    habits: { data: any; error: any };
-    entries: { data: any; error: any };
+    categories: DataResult;
+    habits: DataResult;
+    entries: DataResult;
   }>({
     categories: { data: null, error: null },
     habits: { data: null, error: null },

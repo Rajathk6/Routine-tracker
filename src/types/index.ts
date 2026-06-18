@@ -5,7 +5,7 @@ export interface Category {
   sort_order: number;
 }
 
-export type UnitType = 'number' | 'count' | 'yesno' | 'pages';
+export type UnitType = "number" | "count" | "yesno" | "pages" | "tick";
 
 export interface Habit {
   id: string;
