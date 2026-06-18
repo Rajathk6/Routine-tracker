@@ -1,5 +1,6 @@
 "use client";
-import { useState, useEffect, useRef } from 'react';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Category, Habit, Entry } from '@/types';
 import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
 
@@ -21,13 +22,19 @@ type ViewMode = 'month' | 'week' | 'day';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'
+  'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-// Detect mobile via window width (SSR-safe)
 const getDefaultView = (): ViewMode => {
   if (typeof window !== 'undefined' && window.innerWidth < 768) return 'week';
   return 'month';
+};
+
+type ColInfo = {
+  dateStr: string;
+  label: number;
+  dayOfWeek: string;
+  isWeekend: boolean;
 };
 
 export default function LogGrid({
@@ -36,32 +43,41 @@ export default function LogGrid({
   entries,
   onSaveEntry,
   selectedDate,
-  setSelectedDate
+  setSelectedDate,
 }: LogGridProps) {
   const [viewMode, setViewMode] = useState<ViewMode>(getDefaultView);
   const [editingCell, setEditingCell] = useState<{ habitId: string; dateStr: string } | null>(null);
   const [editValue, setEditValue] = useState<string>('');
   const editInputRef = useRef<HTMLInputElement>(null);
 
+  const isMobile = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)[0];
+
   const currentYear = new Date().getFullYear();
-  const maxYear = Math.max(currentYear, 2030); // allow selecting through 2030
+  const maxYear = Math.max(currentYear, 2030);
 
-  // ── Entry lookup map ────────────────────────────────────────────────────
-  const entriesMap = entries.reduce((acc, entry) => {
-    if (!acc[entry.habit_id]) acc[entry.habit_id] = {};
-    acc[entry.habit_id][entry.entry_date] = entry;
-    return acc;
-  }, {} as Record<string, Record<string, Entry>>);
+  const CATEGORY_WIDTH = isMobile ? 72 : 90;
+  const HABIT_WIDTH = isMobile ? 128 : 160;
+  const UNIT_WIDTH = 80;
+  const STAT_WIDTH = 65;
+  const DAY_WIDTH = 38;
 
-  // ── Habits grouped by category ──────────────────────────────────────────
-  const habitsByCategory = categories.reduce((acc, cat) => {
-    acc[cat.id] = habits
-      .filter((h) => h.category_id === cat.id)
-      .sort((a, b) => a.sort_order - b.sort_order);
-    return acc;
-  }, {} as Record<string, Habit[]>);
+  const entriesMap = useMemo(() => {
+    return entries.reduce((acc, entry) => {
+      if (!acc[entry.habit_id]) acc[entry.habit_id] = {};
+      acc[entry.habit_id][entry.entry_date] = entry;
+      return acc;
+    }, {} as Record<string, Record<string, Entry>>);
+  }, [entries]);
 
-  // ── Date helpers ────────────────────────────────────────────────────────
+  const habitsByCategory = useMemo(() => {
+    return categories.reduce((acc, cat) => {
+      acc[cat.id] = habits
+        .filter((h) => h.category_id === cat.id)
+        .sort((a, b) => a.sort_order - b.sort_order);
+      return acc;
+    }, {} as Record<string, Habit[]>);
+  }, [categories, habits]);
+
   const localDateStr = (date: Date) => {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -72,10 +88,7 @@ export default function LogGrid({
   const dayAbbr = (date: Date) =>
     date.toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 2);
 
-  // ── Generate columns ────────────────────────────────────────────────────
-  type ColInfo = { dateStr: string; label: number; dayOfWeek: string; isWeekend: boolean };
-
-  const buildColumns = (): ColInfo[] => {
+  const columns = useMemo<ColInfo[]>(() => {
     const cols: ColInfo[] = [];
     const year = selectedDate.getFullYear();
     const month = selectedDate.getMonth();
@@ -85,42 +98,94 @@ export default function LogGrid({
       for (let d = 1; d <= daysInMonth; d++) {
         const date = new Date(year, month, d);
         const dow = date.getDay();
-        cols.push({ dateStr: localDateStr(date), label: d, dayOfWeek: dayAbbr(date), isWeekend: dow === 0 || dow === 6 });
+        cols.push({
+          dateStr: localDateStr(date),
+          label: d,
+          dayOfWeek: dayAbbr(date),
+          isWeekend: dow === 0 || dow === 6,
+        });
       }
     } else if (viewMode === 'week') {
       const dow = selectedDate.getDay();
       const toMon = dow === 0 ? -6 : 1 - dow;
       const monday = new Date(selectedDate);
       monday.setDate(selectedDate.getDate() + toMon);
+
       for (let i = 0; i < 7; i++) {
         const date = new Date(monday);
         date.setDate(monday.getDate() + i);
         const d = date.getDay();
-        cols.push({ dateStr: localDateStr(date), label: date.getDate(), dayOfWeek: dayAbbr(date), isWeekend: d === 0 || d === 6 });
+        cols.push({
+          dateStr: localDateStr(date),
+          label: date.getDate(),
+          dayOfWeek: dayAbbr(date),
+          isWeekend: d === 0 || d === 6,
+        });
       }
     } else {
       const d = selectedDate.getDay();
-      cols.push({ dateStr: localDateStr(selectedDate), label: selectedDate.getDate(), dayOfWeek: dayAbbr(selectedDate), isWeekend: d === 0 || d === 6 });
+      cols.push({
+        dateStr: localDateStr(selectedDate),
+        label: selectedDate.getDate(),
+        dayOfWeek: dayAbbr(selectedDate),
+        isWeekend: d === 0 || d === 6,
+      });
     }
+
     return cols;
-  };
+  }, [selectedDate, viewMode]);
 
-  const [columns, setColumns] = useState<ColInfo[]>(buildColumns);
-  useEffect(() => { setColumns(buildColumns()); }, [selectedDate, viewMode]);
+  const weekGroups = useMemo(() => {
+    if (viewMode !== 'month' || columns.length === 0) return [];
 
-  // ── Navigation ──────────────────────────────────────────────────────────
+    const groups: { label: string; span: number }[] = [];
+    let i = 0;
+
+    while (i < columns.length) {
+      const startDate = new Date(columns[i].dateStr);
+      let span = 0;
+      let j = i;
+
+      while (j < columns.length) {
+        span++;
+        const dayOfWeek = new Date(columns[j].dateStr).getDay();
+        j++;
+        if (dayOfWeek === 0) break;
+      }
+
+      const endIndex = Math.min(j - 1, columns.length - 1);
+      const wkEndDate = new Date(columns[endIndex].dateStr);
+
+      groups.push({
+        label: `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}–${wkEndDate.toLocaleDateString('en-US', { day: 'numeric' })}`,
+        span,
+      });
+
+      i = j;
+    }
+
+    return groups;
+  }, [columns, viewMode]);
+
+  useEffect(() => {
+    if (editingCell && editInputRef.current) {
+      editInputRef.current.focus();
+      editInputRef.current.select();
+    }
+  }, [editingCell]);
+
   const navigate = (dir: 'prev' | 'next') => {
     const v = dir === 'prev' ? -1 : 1;
     const d = new Date(selectedDate);
+
     if (viewMode === 'month') d.setMonth(d.getMonth() + v);
     else if (viewMode === 'week') d.setDate(d.getDate() + v * 7);
     else d.setDate(d.getDate() + v);
-    // Cap at maxYear
+
     if (d.getFullYear() > maxYear) return;
     setSelectedDate(d);
   };
 
-  // ── Month/Year selectors ────────────────────────────────────────────────
   const setMonth = (m: number) => {
     const d = new Date(selectedDate);
     d.setMonth(m);
@@ -133,10 +198,8 @@ export default function LogGrid({
     setSelectedDate(d);
   };
 
-  // Year options: 2020 through 2030
   const yearOptions = Array.from({ length: 2030 - 2019 }, (_, i) => 2020 + i);
 
-  // ── Label strings ───────────────────────────────────────────────────────
   const weekRangeLabel = () => {
     const dow = selectedDate.getDay();
     const toMon = dow === 0 ? -6 : 1 - dow;
@@ -147,38 +210,6 @@ export default function LogGrid({
     const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     return `${fmt(monday)} – ${fmt(sunday)}, ${monday.getFullYear()}`;
   };
-
-  // ── Week group headers for month view ───────────────────────────────────
-  const buildWeekGroups = () => {
-    const groups: { label: string; span: number }[] = [];
-    let i = 0;
-    while (i < columns.length) {
-      const wkStart = columns[i];
-      const startDate = new Date(wkStart.dateStr);
-      // Week ends on Sunday or last day of the month in this group
-      let span = 0;
-      let j = i;
-      while (j < columns.length) {
-        span++;
-        const dayOfWeek = new Date(columns[j].dateStr).getDay();
-        j++;
-        if (dayOfWeek === 0) break; // Sunday ends the week
-      }
-      const wkEndDate = new Date(columns[Math.min(j - 1, columns.length - 1)].dateStr);
-      const label = `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}–${wkEndDate.toLocaleDateString('en-US', { day: 'numeric' })}`;
-      groups.push({ label, span });
-      i = j;
-    }
-    return groups;
-  };
-
-  // ── Editing ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (editingCell && editInputRef.current) {
-      editInputRef.current.focus();
-      editInputRef.current.select();
-    }
-  }, [editingCell]);
 
   const startEditing = (habitId: string, dateStr: string, currentVal: number | undefined) => {
     setEditingCell({ habitId, dateStr });
@@ -196,11 +227,20 @@ export default function LogGrid({
 
   const finishEditing = async () => {
     if (!editingCell) return;
+
     const { habitId, dateStr } = editingCell;
+    const raw = editValue.trim();
+
+    if (raw !== '') {
+      const parsed = parseEntryValue(raw);
+      if (parsed === null) return;
+      setEditingCell(null);
+      await onSaveEntry(habitId, dateStr, parsed, null);
+      return;
+    }
+
     setEditingCell(null);
-    const val = editValue.trim() === '' ? null : parseEntryValue(editValue);
-    if (val === null && editValue.trim() !== '') return;
-    await onSaveEntry(habitId, dateStr, val, null);
+    await onSaveEntry(habitId, dateStr, null, null);
   };
 
   const handleCellClick = async (habit: Habit, dateStr: string) => {
@@ -213,46 +253,89 @@ export default function LogGrid({
     }
   };
 
-  // ── Category color ──────────────────────────────────────────────────────
   const catColorClass = (colorTag?: string) => {
     switch (colorTag?.toLowerCase()) {
-      case 'blue':   return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 'green':  return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+      case 'blue':
+        return 'bg-blue-100 text-blue-800 border-blue-200';
+      case 'green':
+        return 'bg-emerald-100 text-emerald-800 border-emerald-200';
       case 'yellow':
-      case 'orange': return 'bg-amber-100 text-amber-800 border-amber-200';
-      case 'purple': return 'bg-purple-100 text-purple-800 border-purple-200';
+      case 'orange':
+        return 'bg-amber-100 text-amber-800 border-amber-200';
+      case 'purple':
+        return 'bg-purple-100 text-purple-800 border-purple-200';
       case 'rose':
-      case 'red':    return 'bg-rose-100 text-rose-800 border-rose-200';
-      case 'indigo': return 'bg-indigo-100 text-indigo-800 border-indigo-200';
-      default:       return 'bg-slate-100 text-slate-800 border-slate-200';
+      case 'red':
+        return 'bg-rose-100 text-rose-800 border-rose-200';
+      case 'indigo':
+        return 'bg-indigo-100 text-indigo-800 border-indigo-200';
+      default:
+        return 'bg-slate-100 text-slate-800 border-slate-200';
     }
   };
 
-  // ── Stats ───────────────────────────────────────────────────────────────
   const calcStats = (habit: Habit) => {
     const map = entriesMap[habit.id] || {};
     let total = 0;
+
     columns.forEach((col) => {
       const e = map[col.dateStr];
       if (!e) return;
-      if (habit.unit_type === 'yesno') { if (e.value_bool) total += 1; }
-      else total += e.value_numeric || 0;
+      if (habit.unit_type === 'yesno') {
+        if (e.value_bool) total += 1;
+      } else {
+        total += e.value_numeric || 0;
+      }
     });
+
     total = Math.round(total * 100) / 100;
     const goal = habit.monthly_goal || 0;
     const rate = goal > 0 ? Math.round((total / goal) * 100) : 0;
     return { total, goal, rate };
   };
 
-  const weekGroups = viewMode === 'month' ? buildWeekGroups() : [];
+  const stickyCategoryStyle = {
+    left: 0,
+    width: CATEGORY_WIDTH,
+    minWidth: CATEGORY_WIDTH,
+  };
 
-  // ── Render ──────────────────────────────────────────────────────────────
+  const stickyHabitStyle = {
+    left: CATEGORY_WIDTH,
+    width: HABIT_WIDTH,
+    minWidth: HABIT_WIDTH,
+  };
+
+  const stickyUnitStyle = {
+    left: CATEGORY_WIDTH + HABIT_WIDTH,
+    width: UNIT_WIDTH,
+    minWidth: UNIT_WIDTH,
+  };
+
+  const stickyTotalStyle = {
+    right: STAT_WIDTH * 2,
+    width: STAT_WIDTH,
+    minWidth: STAT_WIDTH,
+  };
+
+  const stickyGoalStyle = {
+    right: STAT_WIDTH,
+    width: STAT_WIDTH,
+    minWidth: STAT_WIDTH,
+  };
+
+  const stickyRateStyle = {
+    right: 0,
+    width: STAT_WIDTH,
+    minWidth: STAT_WIDTH,
+  };
+
+  const tableMinWidth =
+    CATEGORY_WIDTH + HABIT_WIDTH + UNIT_WIDTH + columns.length * DAY_WIDTH + (STAT_WIDTH * 3);
+
   return (
     <div className="space-y-4">
-      {/* ── Controls Bar ─────────────────────────────────────────────── */}
       <div className="flex flex-wrap gap-3 items-center justify-between bg-white p-3 sm:p-4 rounded-2xl shadow-sm border border-slate-200">
-
-        {/* View toggle */}
         <div className="flex bg-slate-100 p-1 rounded-xl">
           {(['month', 'week', 'day'] as const).map((mode) => (
             <button
@@ -269,7 +352,6 @@ export default function LogGrid({
           ))}
         </div>
 
-        {/* Date navigation */}
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => navigate('prev')}
@@ -279,7 +361,6 @@ export default function LogGrid({
           </button>
 
           {viewMode === 'month' ? (
-            /* Month + Year selectors */
             <div className="flex items-center gap-1.5">
               <select
                 value={selectedDate.getMonth()}
@@ -287,7 +368,9 @@ export default function LogGrid({
                 className="text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-indigo-400 cursor-pointer"
               >
                 {MONTHS.map((name, idx) => (
-                  <option key={idx} value={idx}>{name}</option>
+                  <option key={idx} value={idx}>
+                    {name}
+                  </option>
                 ))}
               </select>
               <select
@@ -296,7 +379,9 @@ export default function LogGrid({
                 className="text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-indigo-400 cursor-pointer"
               >
                 {yearOptions.map((y) => (
-                  <option key={y} value={y}>{y}</option>
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
                 ))}
               </select>
             </div>
@@ -305,7 +390,13 @@ export default function LogGrid({
               <Calendar className="h-4 w-4 text-indigo-500 hidden sm:block" />
               <span>
                 {viewMode === 'week' && weekRangeLabel()}
-                {viewMode === 'day' && selectedDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                {viewMode === 'day' &&
+                  selectedDate.toLocaleDateString('en-US', {
+                    weekday: 'short',
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                  })}
               </span>
             </div>
           )}
@@ -319,7 +410,6 @@ export default function LogGrid({
           </button>
         </div>
 
-        {/* Today */}
         <button
           onClick={() => setSelectedDate(new Date())}
           className="text-xs font-bold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
@@ -328,26 +418,27 @@ export default function LogGrid({
         </button>
       </div>
 
-      {/* ── Spreadsheet ──────────────────────────────────────────────── */}
-      {/*
-        Layout strategy:
-        - Outer div: overflow-x-auto (horizontal scroll)
-        - sticky left: Category, Habit, Unit columns
-        - sticky right: Total, Goal, Rate% columns
-        - scrollable middle: day columns
-      */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="border-collapse text-left text-xs text-slate-800 font-sans" style={{ minWidth: `${330 + columns.length * 38 + 195}px` }}>
+          <table
+            className="border-collapse text-left text-xs text-slate-800 font-sans"
+            style={{ minWidth: `${tableMinWidth}px` }}
+          >
             <thead>
-              {/* Week group header row (month view only) */}
               {viewMode === 'month' && weekGroups.length > 0 && (
                 <tr className="bg-slate-50 border-b border-slate-200">
-                  {/* Sticky left placeholders */}
-                  <th className="sticky left-0 z-20 bg-slate-50 w-[90px] border-r border-slate-200" />
-                  <th className="sticky left-[90px] z-20 bg-slate-50 w-[160px] border-r border-slate-200" />
-                  <th className="sticky left-[250px] z-20 bg-slate-50 w-[80px] border-r border-slate-200" />
-                  {/* Week group spans */}
+                  <th
+                    className="sticky z-20 bg-slate-50 border-r border-slate-200"
+                    style={stickyCategoryStyle}
+                  />
+                  <th
+                    className="sticky z-20 bg-slate-50 border-r border-slate-200"
+                    style={stickyHabitStyle}
+                  />
+                  <th
+                    className={`${isMobile ? '' : 'sticky z-20'} bg-slate-50 border-r border-slate-200`}
+                    style={isMobile ? { width: UNIT_WIDTH, minWidth: UNIT_WIDTH } : stickyUnitStyle}
+                  />
                   {weekGroups.map((wk, i) => (
                     <th
                       key={i}
@@ -357,26 +448,32 @@ export default function LogGrid({
                       {wk.label}
                     </th>
                   ))}
-                  {/* Sticky right placeholders */}
-                  <th className="sticky right-[130px] z-20 bg-slate-100 w-[65px] border-l border-slate-200" />
-                  <th className="sticky right-[65px] z-20 bg-slate-100 w-[65px] border-l border-slate-200" />
-                  <th className="sticky right-0 z-20 bg-slate-100 w-[65px] border-l border-slate-200" />
+                  <th className={`${isMobile ? '' : 'sticky z-20'} bg-slate-100 border-l border-slate-200`} style={isMobile ? { width: STAT_WIDTH, minWidth: STAT_WIDTH } : stickyTotalStyle} />
+                  <th className={`${isMobile ? '' : 'sticky z-20'} bg-slate-100 border-l border-slate-200`} style={isMobile ? { width: STAT_WIDTH, minWidth: STAT_WIDTH } : stickyGoalStyle} />
+                  <th className={`${isMobile ? '' : 'sticky z-20'} bg-slate-100 border-l border-slate-200`} style={isMobile ? { width: STAT_WIDTH, minWidth: STAT_WIDTH } : stickyRateStyle} />
                 </tr>
               )}
 
-              {/* Column headers */}
               <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-600 font-bold">
-                <th className="sticky left-0 z-20 bg-slate-50/90 backdrop-blur-sm w-[90px] py-2 px-3 border-r border-slate-200 text-[10px] uppercase tracking-wider whitespace-nowrap">
+                <th
+                  className="sticky z-20 bg-slate-50/90 backdrop-blur-sm py-2 px-3 border-r border-slate-200 text-[10px] uppercase tracking-wider whitespace-nowrap"
+                  style={stickyCategoryStyle}
+                >
                   Category
                 </th>
-                <th className="sticky left-[90px] z-20 bg-slate-50/90 backdrop-blur-sm w-[160px] py-2 px-3 border-r border-slate-200 text-[10px] uppercase tracking-wider whitespace-nowrap">
+                <th
+                  className="sticky z-20 bg-slate-50/90 backdrop-blur-sm py-2 px-3 border-r border-slate-200 text-[10px] uppercase tracking-wider whitespace-nowrap"
+                  style={stickyHabitStyle}
+                >
                   Habit
                 </th>
-                <th className="sticky left-[250px] z-20 bg-slate-50/90 backdrop-blur-sm w-[80px] py-2 px-2 border-r border-slate-200 text-center text-[10px] uppercase tracking-wider whitespace-nowrap">
+                <th
+                  className={`${isMobile ? '' : 'sticky z-20 bg-slate-50/90 backdrop-blur-sm'} py-2 px-2 border-r border-slate-200 text-center text-[10px] uppercase tracking-wider whitespace-nowrap`}
+                  style={isMobile ? { width: UNIT_WIDTH, minWidth: UNIT_WIDTH } : stickyUnitStyle}
+                >
                   Unit
                 </th>
 
-                {/* Day columns (scrollable) */}
                 {columns.map((col) => (
                   <th
                     key={col.dateStr}
@@ -389,14 +486,22 @@ export default function LogGrid({
                   </th>
                 ))}
 
-                {/* Sticky right stat columns */}
-                <th className="sticky right-[130px] z-20 bg-slate-100/90 backdrop-blur-sm w-[65px] py-2 px-2 text-center border-l border-slate-200 text-[10px] uppercase tracking-wider text-slate-700 whitespace-nowrap">
+                <th
+                  className={`${isMobile ? '' : 'sticky z-20 bg-slate-100/90 backdrop-blur-sm'} py-2 px-2 text-center border-l border-slate-200 text-[10px] uppercase tracking-wider text-slate-700 whitespace-nowrap`}
+                  style={isMobile ? { width: STAT_WIDTH, minWidth: STAT_WIDTH } : stickyTotalStyle}
+                >
                   Total
                 </th>
-                <th className="sticky right-[65px] z-20 bg-slate-100/90 backdrop-blur-sm w-[65px] py-2 px-2 text-center border-l border-slate-200 text-[10px] uppercase tracking-wider text-slate-700 whitespace-nowrap">
+                <th
+                  className={`${isMobile ? '' : 'sticky z-20 bg-slate-100/90 backdrop-blur-sm'} py-2 px-2 text-center border-l border-slate-200 text-[10px] uppercase tracking-wider text-slate-700 whitespace-nowrap`}
+                  style={isMobile ? { width: STAT_WIDTH, minWidth: STAT_WIDTH } : stickyGoalStyle}
+                >
                   Goal
                 </th>
-                <th className="sticky right-0 z-20 bg-slate-100/90 backdrop-blur-sm w-[65px] py-2 px-2 text-center border-l border-slate-200 text-[10px] uppercase tracking-wider text-slate-700 whitespace-nowrap">
+                <th
+                  className={`${isMobile ? '' : 'sticky z-20 bg-slate-100/90 backdrop-blur-sm'} py-2 px-2 text-center border-l border-slate-200 text-[10px] uppercase tracking-wider text-slate-700 whitespace-nowrap`}
+                  style={isMobile ? { width: STAT_WIDTH, minWidth: STAT_WIDTH } : stickyRateStyle}
+                >
                   Rate%
                 </th>
               </tr>
@@ -404,6 +509,7 @@ export default function LogGrid({
 
             <tbody>
               {categories
+                .slice()
                 .sort((a, b) => a.sort_order - b.sort_order)
                 .map((cat) => {
                   const catHabits = habitsByCategory[cat.id] || [];
@@ -414,27 +520,30 @@ export default function LogGrid({
 
                     return (
                       <tr key={habit.id} className="border-b border-slate-200 hover:bg-slate-50/60 transition-colors">
-                        {/* Category — sticky left, rowSpan */}
                         {habitIdx === 0 && (
                           <td
                             rowSpan={catHabits.length}
-                            className={`sticky left-0 z-10 align-middle border-r border-slate-200 font-bold text-[11px] text-center uppercase py-3 px-2 ${catColorClass(cat.color_tag)}`}
+                            className={`sticky z-10 align-middle border-r border-slate-200 font-bold text-[11px] text-center uppercase py-3 px-2 ${catColorClass(cat.color_tag)}`}
+                            style={stickyCategoryStyle}
                           >
                             {cat.name}
                           </td>
                         )}
 
-                        {/* Habit name — sticky */}
-                        <td className="sticky left-[90px] z-10 bg-white py-2.5 px-3 border-r border-slate-200 font-semibold text-slate-800 whitespace-nowrap max-w-[160px] overflow-hidden text-ellipsis">
+                        <td
+                          className="sticky z-10 bg-white py-2.5 px-3 border-r border-slate-200 font-semibold text-slate-800 whitespace-nowrap max-w-[160px] overflow-hidden text-ellipsis"
+                          style={stickyHabitStyle}
+                        >
                           {habit.name}
                         </td>
 
-                        {/* Unit — sticky */}
-                        <td className="sticky left-[250px] z-10 bg-white py-2 px-1 border-r border-slate-200 text-center font-medium text-slate-400 italic text-[10px] whitespace-nowrap">
+                        <td
+                          className={`${isMobile ? '' : 'sticky z-10 bg-white'} py-2 px-1 border-r border-slate-200 text-center font-medium text-slate-400 italic text-[10px] whitespace-nowrap`}
+                          style={isMobile ? { width: UNIT_WIDTH, minWidth: UNIT_WIDTH } : stickyUnitStyle}
+                        >
                           {habit.unit_label || habit.unit_type}
                         </td>
 
-                        {/* Day cells */}
                         {columns.map((col) => {
                           const entry = entriesMap[habit.id]?.[col.dateStr];
                           const isWeekend = col.isWeekend;
@@ -456,69 +565,76 @@ export default function LogGrid({
                                 </div>
                               </td>
                             );
-                          } else {
-                            const value = entry?.value_numeric;
-                            const displayValue = value !== undefined && value !== null
+                          }
+
+                          const value = entry?.value_numeric;
+                          const displayValue =
+                            value !== undefined && value !== null
                               ? habit.unit_type === 'tick' && value === 1
                                 ? '✓'
                                 : value
                               : '';
-                            const isEditing =
-                              editingCell?.habitId === habit.id && editingCell?.dateStr === col.dateStr;
+                          const isEditing =
+                            editingCell?.habitId === habit.id && editingCell?.dateStr === col.dateStr;
 
-                            return (
-                              <td
-                                key={col.dateStr}
-                                onClick={() => {
-                                  if (!isEditing) startEditing(habit.id, col.dateStr, value ?? undefined);
-                                }}
-                                className={`border-r border-slate-200 text-center select-none align-middle cursor-pointer w-[38px] min-w-[38px] ${
-                                  isWeekend ? 'bg-rose-50/40' : ''
-                                } ${isEditing ? 'bg-indigo-50/60 p-0' : 'font-bold text-indigo-600 py-1'}`}
-                              >
-                                {isEditing ? (
-                                  <input
-                                    ref={editInputRef}
-                                    type="text"
-                                    inputMode="decimal"
-                                    value={editValue}
-                                    onChange={(e) => setEditValue(e.target.value)}
-                                    onBlur={finishEditing}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') finishEditing();
-                                      if (e.key === 'Escape') setEditingCell(null);
-                                    }}
-                                    className="w-full h-8 px-0.5 text-center bg-transparent border-none outline-none font-bold text-indigo-700 text-xs"
-                                  />
-                                ) : (
-                                  <div className="h-full w-full py-1.5 flex items-center justify-center min-h-[24px] text-xs">
-                                    {displayValue}
-                                  </div>
-                                )}
-                              </td>
-                            );
-                          }
+                          return (
+                            <td
+                              key={col.dateStr}
+                              onClick={() => {
+                                if (!isEditing) startEditing(habit.id, col.dateStr, value ?? undefined);
+                              }}
+                              className={`border-r border-slate-200 text-center select-none align-middle cursor-pointer w-[38px] min-w-[38px] ${
+                                isWeekend ? 'bg-rose-50/40' : ''
+                              } ${isEditing ? 'bg-indigo-50/60 p-0' : 'font-bold text-indigo-600 py-1'}`}
+                            >
+                              {isEditing ? (
+                                <input
+                                  ref={editInputRef}
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={editValue}
+                                  onChange={(e) => setEditValue(e.target.value)}
+                                  onBlur={finishEditing}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') finishEditing();
+                                    if (e.key === 'Escape') setEditingCell(null);
+                                  }}
+                                  className="w-full h-8 px-0.5 text-center bg-transparent border-none outline-none font-bold text-indigo-700 text-xs"
+                                />
+                              ) : (
+                                <div className="h-full w-full py-1.5 flex items-center justify-center min-h-[24px] text-xs">
+                                  {displayValue}
+                                </div>
+                              )}
+                            </td>
+                          );
                         })}
 
-                        {/* Total — sticky right */}
-                        <td className="sticky right-[130px] z-10 bg-slate-50/90 py-2.5 px-2 border-l border-slate-200 text-center font-bold text-slate-800 whitespace-nowrap text-xs">
+                        <td
+                          className={`${isMobile ? '' : 'sticky z-10 bg-slate-50/90'} py-2.5 px-2 border-l border-slate-200 text-center font-bold text-slate-800 whitespace-nowrap text-xs`}
+                          style={isMobile ? { width: STAT_WIDTH, minWidth: STAT_WIDTH } : stickyTotalStyle}
+                        >
                           {total}
                         </td>
 
-                        {/* Goal — sticky right */}
-                        <td className="sticky right-[65px] z-10 bg-slate-50/90 py-2.5 px-2 border-l border-slate-200 text-center font-medium text-slate-500 whitespace-nowrap text-xs">
+                        <td
+                          className={`${isMobile ? '' : 'sticky z-10 bg-slate-50/90'} py-2.5 px-2 border-l border-slate-200 text-center font-medium text-slate-500 whitespace-nowrap text-xs`}
+                          style={isMobile ? { width: STAT_WIDTH, minWidth: STAT_WIDTH } : stickyGoalStyle}
+                        >
                           {goal || '–'}
                         </td>
 
-                        {/* Rate% — sticky right */}
                         <td
-                          className={`sticky right-0 z-10 py-2.5 px-2 border-l border-slate-200 text-center font-bold whitespace-nowrap text-xs ${
+                          className={`${
+                            isMobile ? '' : 'sticky z-10'
+                          } py-2.5 px-2 border-l border-slate-200 text-center font-bold whitespace-nowrap text-xs ${
                             rate >= 100
                               ? 'bg-emerald-50 text-emerald-700'
                               : rate >= 50
                               ? 'bg-amber-50 text-amber-700'
                               : 'bg-rose-50 text-rose-600'
                           }`}
+                          style={isMobile ? { width: STAT_WIDTH, minWidth: STAT_WIDTH } : stickyRateStyle}
                         >
                           {goal > 0 ? `${rate}%` : '–'}
                         </td>
@@ -529,7 +645,10 @@ export default function LogGrid({
 
               {habits.length === 0 && (
                 <tr>
-                  <td colSpan={3 + columns.length + 3} className="text-center py-16 text-slate-400 font-medium text-sm">
+                  <td
+                    colSpan={3 + columns.length + 3}
+                    className="text-center py-16 text-slate-400 font-medium text-sm"
+                  >
                     No habits yet. Go to <strong>Settings</strong> to add categories and habits.
                   </td>
                 </tr>
@@ -539,7 +658,6 @@ export default function LogGrid({
         </div>
       </div>
 
-      {/* ── Legend ───────────────────────────────────────────────────── */}
       <div className="flex flex-wrap justify-between items-center gap-2 bg-slate-50 px-4 py-3 rounded-xl border border-slate-200 text-[11px] text-slate-500 font-medium">
         <div>
           <span className="font-bold text-slate-700">Legend: </span>
@@ -547,7 +665,7 @@ export default function LogGrid({
           <span className="text-indigo-600 font-bold">Numbers</span> — click any cell to edit &bull; auto-saved instantly
         </div>
         <div className="text-slate-400 hidden sm:block">
-          Category · Habit · Unit columns stay fixed &bull; Scroll ← → to see all dates
+          Category · Habit stay fixed on mobile &bull; Scroll ← → to see all logs
         </div>
       </div>
     </div>

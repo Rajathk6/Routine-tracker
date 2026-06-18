@@ -26,7 +26,7 @@ export default function Header({
   return (
     <header className="border-b border-slate-200 bg-white shadow-sm sticky top-0 z-50">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="flex flex-col gap-3 py-3 sm:py-0 sm:flex-row sm:justify-between sm:items-center">
+        <div className="flex flex-col gap-3 py-6 sm:py-3 sm:flex-row sm:justify-between sm:items-center">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center space-x-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-600 text-white shadow-md shadow-indigo-200">
@@ -47,7 +47,7 @@ export default function Header({
             </button>
           </div>
 
-          <div className={`${mobileMenuOpen ? 'block' : 'hidden sm:block'} w-full sm:max-w-2xl`}> 
+          <div className={`${mobileMenuOpen ? 'block' : 'hidden sm:block'} w-full sm:max-w-3xl`}> 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <nav className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl sm:bg-transparent sm:p-0">
                 <button
