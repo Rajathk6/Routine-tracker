@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+"use client";
+import { useState, useEffect, useRef } from 'react';
 import { Category, Habit, Entry } from '@/types';
-import { ChevronLeft, ChevronRight, Check, X, Calendar } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
 
 interface LogGridProps {
   categories: Category[];
@@ -16,6 +17,19 @@ interface LogGridProps {
   setSelectedDate: (date: Date) => void;
 }
 
+type ViewMode = 'month' | 'week' | 'day';
+
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+// Detect mobile via window width (SSR-safe)
+const getDefaultView = (): ViewMode => {
+  if (typeof window !== 'undefined' && window.innerWidth < 768) return 'week';
+  return 'month';
+};
+
 export default function LogGrid({
   categories,
   habits,
@@ -24,12 +38,22 @@ export default function LogGrid({
   selectedDate,
   setSelectedDate
 }: LogGridProps) {
-  const [viewMode, setViewMode] = useState<'month' | 'week' | 'day'>('month');
+  const [viewMode, setViewMode] = useState<ViewMode>(getDefaultView);
   const [editingCell, setEditingCell] = useState<{ habitId: string; dateStr: string } | null>(null);
   const [editValue, setEditValue] = useState<string>('');
   const editInputRef = useRef<HTMLInputElement>(null);
 
-  // Group habits by category
+  const currentYear = new Date().getFullYear();
+  const maxYear = Math.max(currentYear, 2030); // allow selecting through 2030
+
+  // ── Entry lookup map ────────────────────────────────────────────────────
+  const entriesMap = entries.reduce((acc, entry) => {
+    if (!acc[entry.habit_id]) acc[entry.habit_id] = {};
+    acc[entry.habit_id][entry.entry_date] = entry;
+    return acc;
+  }, {} as Record<string, Record<string, Entry>>);
+
+  // ── Habits grouped by category ──────────────────────────────────────────
   const habitsByCategory = categories.reduce((acc, cat) => {
     acc[cat.id] = habits
       .filter((h) => h.category_id === cat.id)
@@ -37,28 +61,22 @@ export default function LogGrid({
     return acc;
   }, {} as Record<string, Habit[]>);
 
-  // Create a map of entries for fast lookup: entriesMap[habitId][dateStr] = entry
-  const entriesMap = entries.reduce((acc, entry) => {
-    if (!acc[entry.habit_id]) {
-      acc[entry.habit_id] = {};
-    }
-    acc[entry.habit_id][entry.entry_date] = entry;
-    return acc;
-  }, {} as Record<string, Record<string, Entry>>);
-
-  // Helper: Format date as YYYY-MM-DD in local time
-  const getLocalDateString = (date: Date) => {
+  // ── Date helpers ────────────────────────────────────────────────────────
+  const localDateStr = (date: Date) => {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
     const d = String(date.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
   };
 
-  // Generate date columns based on viewMode
-  const [columns, setColumns] = useState<{ dateStr: string; label: number; dayOfWeek: string; isWeekend: boolean }[]>([]);
+  const dayAbbr = (date: Date) =>
+    date.toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 2);
 
-  useEffect(() => {
-    const cols = [];
+  // ── Generate columns ────────────────────────────────────────────────────
+  type ColInfo = { dateStr: string; label: number; dayOfWeek: string; isWeekend: boolean };
+
+  const buildColumns = (): ColInfo[] => {
+    const cols: ColInfo[] = [];
     const year = selectedDate.getFullYear();
     const month = selectedDate.getMonth();
 
@@ -66,67 +84,95 @@ export default function LogGrid({
       const daysInMonth = new Date(year, month + 1, 0).getDate();
       for (let d = 1; d <= daysInMonth; d++) {
         const date = new Date(year, month, d);
-        const dayName = date.toLocaleDateString('en-US', { weekday: 'short' }).substring(0, 2); // Mo, Tu, etc.
-        const dayOfWeekIndex = date.getDay();
-        const isWeekend = dayOfWeekIndex === 0 || dayOfWeekIndex === 6; // Sun = 0, Sat = 6
-        cols.push({
-          dateStr: getLocalDateString(date),
-          label: d,
-          dayOfWeek: dayName,
-          isWeekend
-        });
+        const dow = date.getDay();
+        cols.push({ dateStr: localDateStr(date), label: d, dayOfWeek: dayAbbr(date), isWeekend: dow === 0 || dow === 6 });
       }
     } else if (viewMode === 'week') {
-      // Find Monday of the selected week
-      const currentDay = selectedDate.getDay();
-      const distanceToMonday = currentDay === 0 ? -6 : 1 - currentDay; // Adjust if Sunday
+      const dow = selectedDate.getDay();
+      const toMon = dow === 0 ? -6 : 1 - dow;
       const monday = new Date(selectedDate);
-      monday.setDate(selectedDate.getDate() + distanceToMonday);
-
+      monday.setDate(selectedDate.getDate() + toMon);
       for (let i = 0; i < 7; i++) {
         const date = new Date(monday);
         date.setDate(monday.getDate() + i);
-        const dayName = date.toLocaleDateString('en-US', { weekday: 'short' }).substring(0, 2);
-        const dayOfWeekIndex = date.getDay();
-        const isWeekend = dayOfWeekIndex === 0 || dayOfWeekIndex === 6;
-        cols.push({
-          dateStr: getLocalDateString(date),
-          label: date.getDate(),
-          dayOfWeek: dayName,
-          isWeekend
-        });
+        const d = date.getDay();
+        cols.push({ dateStr: localDateStr(date), label: date.getDate(), dayOfWeek: dayAbbr(date), isWeekend: d === 0 || d === 6 });
       }
     } else {
-      // Single Day View
-      const dayName = selectedDate.toLocaleDateString('en-US', { weekday: 'short' }).substring(0, 2);
-      const dayOfWeekIndex = selectedDate.getDay();
-      cols.push({
-        dateStr: getLocalDateString(selectedDate),
-        label: selectedDate.getDate(),
-        dayOfWeek: dayName,
-        isWeekend: dayOfWeekIndex === 0 || dayOfWeekIndex === 6
-      });
+      const d = selectedDate.getDay();
+      cols.push({ dateStr: localDateStr(selectedDate), label: selectedDate.getDate(), dayOfWeek: dayAbbr(selectedDate), isWeekend: d === 0 || d === 6 });
     }
-
-    setColumns(cols);
-  }, [selectedDate, viewMode]);
-
-  // Handle previous/next navigation
-  const handleNavigate = (direction: 'prev' | 'next') => {
-    const val = direction === 'prev' ? -1 : 1;
-    const newDate = new Date(selectedDate);
-
-    if (viewMode === 'month') {
-      newDate.setMonth(selectedDate.getMonth() + val);
-    } else if (viewMode === 'week') {
-      newDate.setDate(selectedDate.getDate() + val * 7);
-    } else {
-      newDate.setDate(selectedDate.getDate() + val);
-    }
-    setSelectedDate(newDate);
+    return cols;
   };
 
-  // Focus the editing input when opened
+  const [columns, setColumns] = useState<ColInfo[]>(buildColumns);
+  useEffect(() => { setColumns(buildColumns()); }, [selectedDate, viewMode]);
+
+  // ── Navigation ──────────────────────────────────────────────────────────
+  const navigate = (dir: 'prev' | 'next') => {
+    const v = dir === 'prev' ? -1 : 1;
+    const d = new Date(selectedDate);
+    if (viewMode === 'month') d.setMonth(d.getMonth() + v);
+    else if (viewMode === 'week') d.setDate(d.getDate() + v * 7);
+    else d.setDate(d.getDate() + v);
+    // Cap at maxYear
+    if (d.getFullYear() > maxYear) return;
+    setSelectedDate(d);
+  };
+
+  // ── Month/Year selectors ────────────────────────────────────────────────
+  const setMonth = (m: number) => {
+    const d = new Date(selectedDate);
+    d.setMonth(m);
+    setSelectedDate(d);
+  };
+
+  const setYear = (y: number) => {
+    const d = new Date(selectedDate);
+    d.setFullYear(y);
+    setSelectedDate(d);
+  };
+
+  // Year options: 2020 through 2030
+  const yearOptions = Array.from({ length: 2030 - 2019 }, (_, i) => 2020 + i);
+
+  // ── Label strings ───────────────────────────────────────────────────────
+  const weekRangeLabel = () => {
+    const dow = selectedDate.getDay();
+    const toMon = dow === 0 ? -6 : 1 - dow;
+    const monday = new Date(selectedDate);
+    monday.setDate(selectedDate.getDate() + toMon);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return `${fmt(monday)} – ${fmt(sunday)}, ${monday.getFullYear()}`;
+  };
+
+  // ── Week group headers for month view ───────────────────────────────────
+  const buildWeekGroups = () => {
+    const groups: { label: string; span: number }[] = [];
+    let i = 0;
+    while (i < columns.length) {
+      const wkStart = columns[i];
+      const startDate = new Date(wkStart.dateStr);
+      // Week ends on Sunday or last day of the month in this group
+      let span = 0;
+      let j = i;
+      while (j < columns.length) {
+        span++;
+        const dayOfWeek = new Date(columns[j].dateStr).getDay();
+        j++;
+        if (dayOfWeek === 0) break; // Sunday ends the week
+      }
+      const wkEndDate = new Date(columns[Math.min(j - 1, columns.length - 1)].dateStr);
+      const label = `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}–${wkEndDate.toLocaleDateString('en-US', { day: 'numeric' })}`;
+      groups.push({ label, span });
+      i = j;
+    }
+    return groups;
+  };
+
+  // ── Editing ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (editingCell && editInputRef.current) {
       editInputRef.current.focus();
@@ -134,142 +180,146 @@ export default function LogGrid({
     }
   }, [editingCell]);
 
-  // Start editing numeric cell
   const startEditing = (habitId: string, dateStr: string, currentVal: number | undefined) => {
     setEditingCell({ habitId, dateStr });
     setEditValue(currentVal !== undefined && currentVal !== null ? String(currentVal) : '');
   };
 
-  // Save numeric edit
+  const parseEntryValue = (raw: string): number | null => {
+    const trimmed = raw.trim();
+    if (trimmed === '') return null;
+    if (/^[✓✔]$/.test(trimmed)) return 1;
+    const normalized = trimmed.replace(/,/g, '');
+    const numeric = Number(normalized);
+    return Number.isFinite(numeric) ? numeric : null;
+  };
+
   const finishEditing = async () => {
     if (!editingCell) return;
     const { habitId, dateStr } = editingCell;
     setEditingCell(null);
-
-    const val = editValue.trim() === '' ? null : Number(editValue);
-    if (val !== null && isNaN(val)) return; // Don't save invalid numbers
-
+    const val = editValue.trim() === '' ? null : parseEntryValue(editValue);
+    if (val === null && editValue.trim() !== '') return;
     await onSaveEntry(habitId, dateStr, val, null);
   };
 
-  // Handle cell click (simple toggle for yesno)
   const handleCellClick = async (habit: Habit, dateStr: string) => {
     if (habit.unit_type === 'yesno') {
-      const currentEntry = entriesMap[habit.id]?.[dateStr];
-      const nextVal = currentEntry ? !currentEntry.value_bool : true;
-      await onSaveEntry(habit.id, dateStr, null, nextVal);
+      const entry = entriesMap[habit.id]?.[dateStr];
+      await onSaveEntry(habit.id, dateStr, null, entry ? !entry.value_bool : true);
+    } else {
+      const entry = entriesMap[habit.id]?.[dateStr];
+      startEditing(habit.id, dateStr, entry?.value_numeric ?? undefined);
     }
   };
 
-  // Format month name
-  const monthName = selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  const weekRangeLabel = () => {
-    const currentDay = selectedDate.getDay();
-    const distanceToMonday = currentDay === 0 ? -6 : 1 - currentDay;
-    const monday = new Date(selectedDate);
-    monday.setDate(selectedDate.getDate() + distanceToMonday);
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-    
-    const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
-    return `Week of ${monday.toLocaleDateString('en-US', options)} - ${sunday.toLocaleDateString('en-US', options)}, ${selectedDate.getFullYear()}`;
-  };
-
-  const getCategoryColorClass = (colorTag?: string) => {
+  // ── Category color ──────────────────────────────────────────────────────
+  const catColorClass = (colorTag?: string) => {
     switch (colorTag?.toLowerCase()) {
-      case 'blue':
-        return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 'green':
-        return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+      case 'blue':   return 'bg-blue-100 text-blue-800 border-blue-200';
+      case 'green':  return 'bg-emerald-100 text-emerald-800 border-emerald-200';
       case 'yellow':
-      case 'orange':
-        return 'bg-amber-100 text-amber-800 border-amber-200';
-      case 'purple':
-        return 'bg-purple-100 text-purple-800 border-purple-200';
+      case 'orange': return 'bg-amber-100 text-amber-800 border-amber-200';
+      case 'purple': return 'bg-purple-100 text-purple-800 border-purple-200';
       case 'rose':
-      case 'red':
-        return 'bg-rose-100 text-rose-800 border-rose-200';
-      case 'indigo':
-        return 'bg-indigo-100 text-indigo-800 border-indigo-200';
-      default:
-        return 'bg-slate-100 text-slate-800 border-slate-200';
+      case 'red':    return 'bg-rose-100 text-rose-800 border-rose-200';
+      case 'indigo': return 'bg-indigo-100 text-indigo-800 border-indigo-200';
+      default:       return 'bg-slate-100 text-slate-800 border-slate-200';
     }
   };
 
-  // Calculate stats for a habit (totals, goals, completion rate)
-  const calculateHabitStats = (habit: Habit) => {
-    const habitEntries = entriesMap[habit.id] || {};
+  // ── Stats ───────────────────────────────────────────────────────────────
+  const calcStats = (habit: Habit) => {
+    const map = entriesMap[habit.id] || {};
     let total = 0;
-
-    // We only sum up entries in the current columns view to match the Google Sheet view logic
     columns.forEach((col) => {
-      const entry = habitEntries[col.dateStr];
-      if (entry) {
-        if (habit.unit_type === 'yesno') {
-          if (entry.value_bool) total += 1;
-        } else {
-          total += entry.value_numeric || 0;
-        }
-      }
+      const e = map[col.dateStr];
+      if (!e) return;
+      if (habit.unit_type === 'yesno') { if (e.value_bool) total += 1; }
+      else total += e.value_numeric || 0;
     });
-
-    // Clean decimals
     total = Math.round(total * 100) / 100;
-
     const goal = habit.monthly_goal || 0;
     const rate = goal > 0 ? Math.round((total / goal) * 100) : 0;
-
     return { total, goal, rate };
   };
 
+  const weekGroups = viewMode === 'month' ? buildWeekGroups() : [];
+
+  // ── Render ──────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6">
-      {/* Grid Controls Panel */}
-      <div className="flex flex-col sm:flex-row justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-slate-200 gap-4">
-        {/* View Selection Toggle */}
-        <div className="flex bg-slate-100 p-1 rounded-xl w-full sm:w-auto">
+    <div className="space-y-4">
+      {/* ── Controls Bar ─────────────────────────────────────────────── */}
+      <div className="flex flex-wrap gap-3 items-center justify-between bg-white p-3 sm:p-4 rounded-2xl shadow-sm border border-slate-200">
+
+        {/* View toggle */}
+        <div className="flex bg-slate-100 p-1 rounded-xl">
           {(['month', 'week', 'day'] as const).map((mode) => (
             <button
               key={mode}
               onClick={() => setViewMode(mode)}
-              className={`flex-1 sm:flex-none px-4 py-2 text-xs font-bold rounded-lg uppercase tracking-wider transition-all duration-200 ${
+              className={`px-3 py-1.5 text-[11px] font-bold rounded-lg uppercase tracking-wider transition-all duration-200 ${
                 viewMode === mode
                   ? 'bg-white text-indigo-600 shadow-sm'
                   : 'text-slate-500 hover:text-slate-800'
               }`}
             >
-              {mode} view
+              {mode}
             </button>
           ))}
         </div>
 
-        {/* Date Selector Navigation */}
-        <div className="flex items-center space-x-4">
+        {/* Date navigation */}
+        <div className="flex items-center gap-2 flex-wrap">
           <button
-            onClick={() => handleNavigate('prev')}
+            onClick={() => navigate('prev')}
             className="p-2 rounded-lg bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-600 cursor-pointer transition-colors"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
-          
-          <div className="flex items-center space-x-2 font-semibold text-slate-800 text-sm md:text-base min-w-[150px] justify-center">
-            <Calendar className="h-4 w-4 text-indigo-500 hidden sm:block" />
-            <span>
-              {viewMode === 'month' && monthName}
-              {viewMode === 'week' && weekRangeLabel()}
-              {viewMode === 'day' && selectedDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
-            </span>
-          </div>
+
+          {viewMode === 'month' ? (
+            /* Month + Year selectors */
+            <div className="flex items-center gap-1.5">
+              <select
+                value={selectedDate.getMonth()}
+                onChange={(e) => setMonth(Number(e.target.value))}
+                className="text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-indigo-400 cursor-pointer"
+              >
+                {MONTHS.map((name, idx) => (
+                  <option key={idx} value={idx}>{name}</option>
+                ))}
+              </select>
+              <select
+                value={selectedDate.getFullYear()}
+                onChange={(e) => setYear(Number(e.target.value))}
+                className="text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-indigo-400 cursor-pointer"
+              >
+                {yearOptions.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 font-semibold text-slate-700 text-xs sm:text-sm min-w-[140px] sm:min-w-[200px] justify-center">
+              <Calendar className="h-4 w-4 text-indigo-500 hidden sm:block" />
+              <span>
+                {viewMode === 'week' && weekRangeLabel()}
+                {viewMode === 'day' && selectedDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+              </span>
+            </div>
+          )}
 
           <button
-            onClick={() => handleNavigate('next')}
-            className="p-2 rounded-lg bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-600 cursor-pointer transition-colors"
+            onClick={() => navigate('next')}
+            disabled={selectedDate.getFullYear() >= maxYear && selectedDate.getMonth() === 11 && viewMode === 'month'}
+            className="p-2 rounded-lg bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-600 cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
-        
-        {/* Reset to Today button */}
+
+        {/* Today */}
         <button
           onClick={() => setSelectedDate(new Date())}
           className="text-xs font-bold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
@@ -278,207 +328,226 @@ export default function LogGrid({
         </button>
       </div>
 
-      {/* Spreadsheet Table Container */}
-      <div className="overflow-x-auto bg-white rounded-2xl shadow-sm border border-slate-200">
-        <table className="w-full border-collapse text-left text-xs text-slate-800 font-sans table-fixed min-w-[900px]">
-          {/* Header Row */}
-          <thead>
-            {/* Top row with WKs groupings (only for month view) */}
-            {viewMode === 'month' && (
-              <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="w-[80px] border-r border-slate-200"></th>
-                <th className="w-[180px] border-r border-slate-200"></th>
-                <th className="w-[70px] border-r border-slate-200"></th>
-                
-                {/* Dynamically build WK headers spanning columns */}
-                {Array.from({ length: Math.ceil(columns.length / 7) }).map((_, wkIdx) => {
-                  const span = Math.min(7, columns.length - wkIdx * 7);
-                  return (
+      {/* ── Spreadsheet ──────────────────────────────────────────────── */}
+      {/*
+        Layout strategy:
+        - Outer div: overflow-x-auto (horizontal scroll)
+        - sticky left: Category, Habit, Unit columns
+        - sticky right: Total, Goal, Rate% columns
+        - scrollable middle: day columns
+      */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="border-collapse text-left text-xs text-slate-800 font-sans" style={{ minWidth: `${330 + columns.length * 38 + 195}px` }}>
+            <thead>
+              {/* Week group header row (month view only) */}
+              {viewMode === 'month' && weekGroups.length > 0 && (
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  {/* Sticky left placeholders */}
+                  <th className="sticky left-0 z-20 bg-slate-50 w-[90px] border-r border-slate-200" />
+                  <th className="sticky left-[90px] z-20 bg-slate-50 w-[160px] border-r border-slate-200" />
+                  <th className="sticky left-[250px] z-20 bg-slate-50 w-[80px] border-r border-slate-200" />
+                  {/* Week group spans */}
+                  {weekGroups.map((wk, i) => (
                     <th
-                      key={wkIdx}
-                      colSpan={span}
-                      className="text-center font-bold text-[10px] tracking-wide text-indigo-600 bg-indigo-50/50 border-r border-slate-200 uppercase py-1"
+                      key={i}
+                      colSpan={wk.span}
+                      className="text-center font-bold text-[10px] tracking-wide text-indigo-600 bg-indigo-50/50 border-r border-slate-200 uppercase py-1 whitespace-nowrap px-1"
                     >
-                      WK {wkIdx + 1}
+                      {wk.label}
                     </th>
-                  );
-                })}
-                
-                <th className="w-[65px] border-r border-slate-200"></th>
-                <th className="w-[65px] border-r border-slate-200"></th>
-                <th className="w-[65px]"></th>
-              </tr>
-            )}
+                  ))}
+                  {/* Sticky right placeholders */}
+                  <th className="sticky right-[130px] z-20 bg-slate-100 w-[65px] border-l border-slate-200" />
+                  <th className="sticky right-[65px] z-20 bg-slate-100 w-[65px] border-l border-slate-200" />
+                  <th className="sticky right-0 z-20 bg-slate-100 w-[65px] border-l border-slate-200" />
+                </tr>
+              )}
 
-            {/* Day of Week Headers */}
-            <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-600 font-bold">
-              <th className="w-[80px] py-2 px-3 border-r border-slate-200 text-[10px] uppercase tracking-wider">Category</th>
-              <th className="w-[180px] py-2 px-3 border-r border-slate-200 text-[10px] uppercase tracking-wider">Habit</th>
-              <th className="w-[70px] py-2 px-2 border-r border-slate-200 text-center text-[10px] uppercase tracking-wider">Unit</th>
-              
-              {/* Individual day columns */}
-              {columns.map((col) => (
-                <th
-                  key={col.dateStr}
-                  className={`text-center font-semibold border-r border-slate-200 py-1.5 px-0.5 select-none ${
-                    col.isWeekend ? 'bg-rose-50 text-rose-800' : 'text-slate-600'
-                  }`}
-                >
-                  <div className="text-[9px] font-medium leading-none">{col.dayOfWeek}</div>
-                  <div className="text-xs font-bold leading-normal mt-0.5">{col.label}</div>
+              {/* Column headers */}
+              <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-600 font-bold">
+                <th className="sticky left-0 z-20 bg-slate-50/90 backdrop-blur-sm w-[90px] py-2 px-3 border-r border-slate-200 text-[10px] uppercase tracking-wider whitespace-nowrap">
+                  Category
                 </th>
-              ))}
+                <th className="sticky left-[90px] z-20 bg-slate-50/90 backdrop-blur-sm w-[160px] py-2 px-3 border-r border-slate-200 text-[10px] uppercase tracking-wider whitespace-nowrap">
+                  Habit
+                </th>
+                <th className="sticky left-[250px] z-20 bg-slate-50/90 backdrop-blur-sm w-[80px] py-2 px-2 border-r border-slate-200 text-center text-[10px] uppercase tracking-wider whitespace-nowrap">
+                  Unit
+                </th>
 
-              <th className="w-[65px] py-2 px-2 text-center border-r border-slate-200 text-[10px] uppercase tracking-wider text-slate-700 bg-slate-100/60">Total</th>
-              <th className="w-[65px] py-2 px-2 text-center border-r border-slate-200 text-[10px] uppercase tracking-wider text-slate-700 bg-slate-100/60">Goal</th>
-              <th className="w-[65px] py-2 px-2 text-center text-[10px] uppercase tracking-wider text-slate-700 bg-slate-100/60">Rate%</th>
-            </tr>
-          </thead>
+                {/* Day columns (scrollable) */}
+                {columns.map((col) => (
+                  <th
+                    key={col.dateStr}
+                    className={`text-center font-semibold border-r border-slate-200 py-1.5 px-0 select-none w-[38px] min-w-[38px] ${
+                      col.isWeekend ? 'bg-rose-50 text-rose-700' : 'text-slate-600'
+                    }`}
+                  >
+                    <div className="text-[9px] font-medium leading-none">{col.dayOfWeek}</div>
+                    <div className="text-[11px] font-bold leading-normal mt-0.5">{col.label}</div>
+                  </th>
+                ))}
 
-          {/* Table Body Rows grouped by categories */}
-          <tbody>
-            {categories
-              .sort((a, b) => a.sort_order - b.sort_order)
-              .map((cat) => {
-                const catHabits = habitsByCategory[cat.id] || [];
-                if (catHabits.length === 0) return null;
+                {/* Sticky right stat columns */}
+                <th className="sticky right-[130px] z-20 bg-slate-100/90 backdrop-blur-sm w-[65px] py-2 px-2 text-center border-l border-slate-200 text-[10px] uppercase tracking-wider text-slate-700 whitespace-nowrap">
+                  Total
+                </th>
+                <th className="sticky right-[65px] z-20 bg-slate-100/90 backdrop-blur-sm w-[65px] py-2 px-2 text-center border-l border-slate-200 text-[10px] uppercase tracking-wider text-slate-700 whitespace-nowrap">
+                  Goal
+                </th>
+                <th className="sticky right-0 z-20 bg-slate-100/90 backdrop-blur-sm w-[65px] py-2 px-2 text-center border-l border-slate-200 text-[10px] uppercase tracking-wider text-slate-700 whitespace-nowrap">
+                  Rate%
+                </th>
+              </tr>
+            </thead>
 
-                return catHabits.map((habit, habitIdx) => {
-                  const { total, goal, rate } = calculateHabitStats(habit);
+            <tbody>
+              {categories
+                .sort((a, b) => a.sort_order - b.sort_order)
+                .map((cat) => {
+                  const catHabits = habitsByCategory[cat.id] || [];
+                  if (catHabits.length === 0) return null;
 
-                  return (
-                    <tr
-                      key={habit.id}
-                      className="border-b border-slate-200 hover:bg-slate-50/50 transition-colors"
-                    >
-                      {/* Category cell - span vertically for first habit of the category */}
-                      {habitIdx === 0 ? (
-                        <td
-                          rowSpan={catHabits.length}
-                          className={`align-middle border-r border-slate-200 font-bold text-[11px] text-center uppercase py-3 px-2 ${getCategoryColorClass(
-                            cat.color_tag
-                          )}`}
-                        >
-                          {cat.name}
+                  return catHabits.map((habit, habitIdx) => {
+                    const { total, goal, rate } = calcStats(habit);
+
+                    return (
+                      <tr key={habit.id} className="border-b border-slate-200 hover:bg-slate-50/60 transition-colors">
+                        {/* Category — sticky left, rowSpan */}
+                        {habitIdx === 0 && (
+                          <td
+                            rowSpan={catHabits.length}
+                            className={`sticky left-0 z-10 align-middle border-r border-slate-200 font-bold text-[11px] text-center uppercase py-3 px-2 ${catColorClass(cat.color_tag)}`}
+                          >
+                            {cat.name}
+                          </td>
+                        )}
+
+                        {/* Habit name — sticky */}
+                        <td className="sticky left-[90px] z-10 bg-white py-2.5 px-3 border-r border-slate-200 font-semibold text-slate-800 whitespace-nowrap max-w-[160px] overflow-hidden text-ellipsis">
+                          {habit.name}
                         </td>
-                      ) : null}
 
-                      {/* Habit Name */}
-                      <td className="py-2.5 px-3 border-r border-slate-200 font-semibold text-slate-800 truncate">
-                        {habit.name}
-                      </td>
+                        {/* Unit — sticky */}
+                        <td className="sticky left-[250px] z-10 bg-white py-2 px-1 border-r border-slate-200 text-center font-medium text-slate-400 italic text-[10px] whitespace-nowrap">
+                          {habit.unit_label || habit.unit_type}
+                        </td>
 
-                      {/* Unit Label */}
-                      <td className="py-2 px-1 border-r border-slate-200 text-center font-medium text-slate-400 italic text-[10px]">
-                        {habit.unit_label || habit.unit_type}
-                      </td>
+                        {/* Day cells */}
+                        {columns.map((col) => {
+                          const entry = entriesMap[habit.id]?.[col.dateStr];
+                          const isWeekend = col.isWeekend;
 
-                      {/* Daily log input cells */}
-                      {columns.map((col) => {
-                        const entry = entriesMap[habit.id]?.[col.dateStr];
-                        const isWeekend = col.isWeekend;
-
-                        if (habit.unit_type === 'yesno') {
-                          const isChecked = entry?.value_bool === true;
-                          return (
-                            <td
-                              key={col.dateStr}
-                              onClick={() => handleCellClick(habit, col.dateStr)}
-                              className={`border-r border-slate-200 text-center cursor-pointer select-none align-middle transition-all hover:bg-indigo-50/30 ${
-                                isWeekend ? 'bg-rose-50/30' : ''
-                              }`}
-                            >
-                              <div className="flex items-center justify-center h-full w-full py-2">
-                                {isChecked && (
-                                  <span className="text-emerald-600 font-extrabold text-sm select-none animate-pulse">
-                                    ✓
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                          );
-                        } else {
-                          // Numeric input fields
-                          const value = entry?.value_numeric;
-                          const isEditing =
-                            editingCell?.habitId === habit.id && editingCell?.dateStr === col.dateStr;
-
-                          return (
-                            <td
-                              key={col.dateStr}
-                              onDoubleClick={() => startEditing(habit.id, col.dateStr, value ?? undefined)}
-                              onClick={() => {
-                                // Double click on mobile is hard, single click is fine if not already editing
-                                if (!isEditing) {
-                                  // Setup short delay to distinguish double click if needed, but simple trigger is fine
-                                }
-                              }}
-                              className={`border-r border-slate-200 text-center select-none align-middle font-bold text-indigo-600 cursor-text py-1 ${
-                                isWeekend ? 'bg-rose-50/30' : ''
-                              } ${isEditing ? 'p-0 bg-indigo-50/50' : ''}`}
-                            >
-                              {isEditing ? (
-                                <input
-                                  ref={editInputRef}
-                                  type="text"
-                                  value={editValue}
-                                  onChange={(e) => setEditValue(e.target.value)}
-                                  onBlur={finishEditing}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') finishEditing();
-                                    if (e.key === 'Escape') setEditingCell(null);
-                                  }}
-                                  className="w-full h-8 px-1 text-center bg-transparent border-none outline-none font-bold text-indigo-700 focus:ring-0 text-xs"
-                                />
-                              ) : (
-                                <div className="h-full w-full py-1.5 flex items-center justify-center min-h-[24px]">
-                                  {value !== undefined && value !== null ? value : ''}
+                          if (habit.unit_type === 'yesno') {
+                            const isChecked = entry?.value_bool === true;
+                            return (
+                              <td
+                                key={col.dateStr}
+                                onClick={() => handleCellClick(habit, col.dateStr)}
+                                className={`border-r border-slate-200 text-center cursor-pointer select-none align-middle transition-all hover:bg-indigo-50/40 w-[38px] min-w-[38px] ${
+                                  isWeekend ? 'bg-rose-50/40' : ''
+                                }`}
+                              >
+                                <div className="flex items-center justify-center h-full py-2">
+                                  {isChecked && (
+                                    <span className="text-emerald-600 font-extrabold text-base select-none">✓</span>
+                                  )}
                                 </div>
-                              )}
-                            </td>
-                          );
-                        }
-                      })}
+                              </td>
+                            );
+                          } else {
+                            const value = entry?.value_numeric;
+                            const displayValue = value !== undefined && value !== null
+                              ? habit.unit_type === 'tick' && value === 1
+                                ? '✓'
+                                : value
+                              : '';
+                            const isEditing =
+                              editingCell?.habitId === habit.id && editingCell?.dateStr === col.dateStr;
 
-                      {/* TOTAL Column */}
-                      <td className="py-2.5 px-2 border-r border-slate-200 text-center font-bold text-slate-800 bg-slate-50/50">
-                        {total}
-                      </td>
+                            return (
+                              <td
+                                key={col.dateStr}
+                                onClick={() => {
+                                  if (!isEditing) startEditing(habit.id, col.dateStr, value ?? undefined);
+                                }}
+                                className={`border-r border-slate-200 text-center select-none align-middle cursor-pointer w-[38px] min-w-[38px] ${
+                                  isWeekend ? 'bg-rose-50/40' : ''
+                                } ${isEditing ? 'bg-indigo-50/60 p-0' : 'font-bold text-indigo-600 py-1'}`}
+                              >
+                                {isEditing ? (
+                                  <input
+                                    ref={editInputRef}
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={editValue}
+                                    onChange={(e) => setEditValue(e.target.value)}
+                                    onBlur={finishEditing}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') finishEditing();
+                                      if (e.key === 'Escape') setEditingCell(null);
+                                    }}
+                                    className="w-full h-8 px-0.5 text-center bg-transparent border-none outline-none font-bold text-indigo-700 text-xs"
+                                  />
+                                ) : (
+                                  <div className="h-full w-full py-1.5 flex items-center justify-center min-h-[24px] text-xs">
+                                    {displayValue}
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          }
+                        })}
 
-                      {/* GOAL Column */}
-                      <td className="py-2.5 px-2 border-r border-slate-200 text-center font-medium text-slate-500 bg-slate-50/50">
-                        {goal || '-'}
-                      </td>
+                        {/* Total — sticky right */}
+                        <td className="sticky right-[130px] z-10 bg-slate-50/90 py-2.5 px-2 border-l border-slate-200 text-center font-bold text-slate-800 whitespace-nowrap text-xs">
+                          {total}
+                        </td>
 
-                      {/* RATE% Column */}
-                      <td
-                        className={`py-2.5 px-2 text-center font-bold bg-slate-50/50 ${
-                          rate >= 100
-                            ? 'text-emerald-600 bg-emerald-50/10'
-                            : rate >= 50
-                            ? 'text-amber-600 bg-amber-50/10'
-                            : 'text-rose-600 bg-rose-50/10'
-                        }`}
-                      >
-                        {goal > 0 ? `${rate}%` : '-'}
-                      </td>
-                    </tr>
-                  );
-                });
-              })}
-          </tbody>
-        </table>
+                        {/* Goal — sticky right */}
+                        <td className="sticky right-[65px] z-10 bg-slate-50/90 py-2.5 px-2 border-l border-slate-200 text-center font-medium text-slate-500 whitespace-nowrap text-xs">
+                          {goal || '–'}
+                        </td>
+
+                        {/* Rate% — sticky right */}
+                        <td
+                          className={`sticky right-0 z-10 py-2.5 px-2 border-l border-slate-200 text-center font-bold whitespace-nowrap text-xs ${
+                            rate >= 100
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : rate >= 50
+                              ? 'bg-amber-50 text-amber-700'
+                              : 'bg-rose-50 text-rose-600'
+                          }`}
+                        >
+                          {goal > 0 ? `${rate}%` : '–'}
+                        </td>
+                      </tr>
+                    );
+                  });
+                })}
+
+              {habits.length === 0 && (
+                <tr>
+                  <td colSpan={3 + columns.length + 3} className="text-center py-16 text-slate-400 font-medium text-sm">
+                    No habits yet. Go to <strong>Settings</strong> to add categories and habits.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {/* Grid Legend & Note */}
-      <div className="flex justify-between items-center bg-slate-50 px-4 py-3 rounded-xl border border-slate-200 text-[11px] text-slate-500 font-medium">
+      {/* ── Legend ───────────────────────────────────────────────────── */}
+      <div className="flex flex-wrap justify-between items-center gap-2 bg-slate-50 px-4 py-3 rounded-xl border border-slate-200 text-[11px] text-slate-500 font-medium">
         <div>
-          <span className="font-bold text-slate-700">Legend:</span>{' '}
-          <span className="text-emerald-600 font-bold">✓</span> for yes/no tasks &bull;{' '}
-          <span className="text-indigo-600 font-bold">Numbers</span> for numeric categories (e.g. km, problems, pages, minutes, steps)
+          <span className="font-bold text-slate-700">Legend: </span>
+          <span className="text-emerald-600 font-bold">✓</span> Use this tick symbol in Settings for tick habits &bull;{' '}
+          <span className="text-indigo-600 font-bold">Numbers</span> — click any cell to edit &bull; auto-saved instantly
         </div>
-        <div className="hidden sm:block text-slate-400">
-          Double-click any number cell to edit values &bull; Changes are autosaved instantly
+        <div className="text-slate-400 hidden sm:block">
+          Category · Habit · Unit columns stay fixed &bull; Scroll ← → to see all dates
         </div>
       </div>
     </div>
