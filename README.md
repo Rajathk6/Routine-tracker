@@ -2,7 +2,7 @@
 
 A modern habit and routine tracking application built with **Next.js**, **TypeScript**, and **Supabase**, designed to provide a spreadsheet-style experience for tracking daily activities, habits, goals, and personal growth metrics.
 
-![Routine Tracker Dashboard](./screenshots/dashboard.png)
+![Routine Tracker Dashboard](https://routine-tracker-chi-eight.vercel.app/)
 
 ---
 
